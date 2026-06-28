@@ -72,7 +72,12 @@ jobs:
       - name: Package (RPM, best effort)
         continue-on-error: true
         run: |
-          ( cd build && cpack -G RPM )
+          # The project hardcodes Fedora-named RPM Requires that don't exist on
+          # openSUSE. Override them with the openSUSE-correct runtime tools; the
+          # shared-library deps are added automatically (autoreq), so zypper still
+          # resolves Boost/libva/libcurl/etc. on its own.
+          ( cd build && cpack -G RPM \
+              -D CPACK_RPM_PACKAGE_REQUIRES="grim, labwc, wlr-randr, xdpyinfo, xwayland, which" )
           find build -name '*.rpm' -exec cp {} dist/ \; || true
 
       # 6. Upload everything in dist/ as a downloadable artifact.
