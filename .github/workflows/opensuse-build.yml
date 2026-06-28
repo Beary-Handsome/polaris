@@ -26,6 +26,9 @@ jobs:
       # 3. Install build dependencies (names verified against the Tumbleweed repos).
       - name: Install build dependencies
         run: |
+          # The opensuse/tumbleweed base image ships busybox-gawk, which blocks the
+          # real gawk that desktop-file-utils and rpm-build require. Swap it in first.
+          zypper --non-interactive install --force-resolution gawk
           zypper --non-interactive install \
             gcc-c++ make cmake ninja python3 which wget rpm-build \
             nodejs24 npm24 go \
