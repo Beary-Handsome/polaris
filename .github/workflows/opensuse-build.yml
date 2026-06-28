@@ -1,9 +1,9 @@
 name: Build (openSUSE Tumbleweed)
 
+# Manual-trigger only by default so it doesn't impose container builds on every
+# push. Maintainers can add `push:` / `pull_request:` triggers if desired.
 on:
-  workflow_dispatch:          # lets you trigger it from the Actions tab
-  push:
-    branches: [ master ]      # also builds when you push this file
+  workflow_dispatch:
 
 jobs:
   build:
@@ -11,19 +11,16 @@ jobs:
     container:
       image: opensuse/tumbleweed:latest
     steps:
-      # 1. Minimal prereqs so GitHub's JS actions can run inside the container.
       - name: Bootstrap container (node + git for actions)
         run: |
           zypper --non-interactive --gpg-auto-import-keys refresh
           zypper --non-interactive install nodejs24 git tar gzip
 
-      # 2. Clone the repo + its submodules.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # 3. Install build dependencies (names verified against the Tumbleweed repos).
       - name: Install build dependencies
         run: |
           # The opensuse/tumbleweed base image ships busybox-gawk, which blocks the
@@ -44,9 +41,11 @@ jobs:
             wayland-devel wayland-protocols-devel pipewire-devel \
             libayatana-appindicator3-devel desktop-file-utils appstream-glib
 
-      # 4. Configure + build. CUDA OFF (AMD card), VAAPI ON; other flags match the Fedora spec.
       - name: Build
         run: |
+          # BOOST_USE_STATIC=OFF: openSUSE ships only shared Boost; the static lookup
+          # otherwise fails the component check and the FetchContent fallback collides
+          # with the partially-detected system targets.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBOOST_USE_STATIC=OFF \
@@ -60,27 +59,21 @@ jobs:
             -DPOLARIS_ENABLE_PIPEWIRE=ON
           cmake --build build --parallel "$(nproc)"
 
-      # 5a. Always produce a relocatable tarball (bulletproof fallback).
       - name: Package (tarball)
         run: |
           mkdir -p dist stage
           DESTDIR="$PWD/stage" cmake --install build
           tar -C stage -czf "dist/polaris-opensuse-tumbleweed-x86_64.tar.gz" .
 
-      # 5b. Best-effort RPM. rpmbuild auto-detects shared-lib Requires, so
-      #     `zypper install` will pull the runtime libraries for you.
-      - name: Package (RPM, best effort)
+      - name: Package (RPM)
         continue-on-error: true
         run: |
-          # The project hardcodes Fedora-named RPM Requires that don't exist on
-          # openSUSE. Override them with the openSUSE-correct runtime tools; the
-          # shared-library deps are added automatically (autoreq), so zypper still
-          # resolves Boost/libva/libcurl/etc. on its own.
+          # The project's CPACK_RPM_PACKAGE_REQUIRES uses Fedora package names; override
+          # with openSUSE names. Shared-library deps are still auto-detected (autoreq).
           ( cd build && cpack -G RPM \
               -D CPACK_RPM_PACKAGE_REQUIRES="grim, labwc, wlr-randr, xdpyinfo, xwayland, which" )
           find build -name '*.rpm' -exec cp {} dist/ \; || true
 
-      # 6. Upload everything in dist/ as a downloadable artifact.
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
