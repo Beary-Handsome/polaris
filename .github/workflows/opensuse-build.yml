@@ -43,6 +43,11 @@ jobs:
 
       - name: Build
         run: |
+          # The Browser Stream helper is built with Go; Go 1.18+ stamps VCS info and the
+          # container checkout trips git's "dubious ownership" guard (exit 128). Mark the
+          # repo safe and disable VCS stamping so the Go helper builds.
+          git config --global --add safe.directory '*'
+          export GOFLAGS=-buildvcs=false
           # Flag set mirrors the upstream Fedora spec / Arch PKGBUILD feature set, so an
           # openSUSE build is the "whole thing", not a stripped-down variant:
           #   * BROWSER_STREAM=ON           - both Fedora and Arch enable it (needs Go, installed above)
