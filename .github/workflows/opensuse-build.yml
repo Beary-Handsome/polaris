@@ -49,6 +49,7 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DBOOST_USE_STATIC=OFF \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DPOLARIS_ASSETS_DIR=/usr/share/polaris \
             -DPOLARIS_ENABLE_CUDA=OFF \
