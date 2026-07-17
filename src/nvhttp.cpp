@@ -4080,6 +4080,11 @@ namespace nvhttp {
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
+    // Isolated sessions (family mode) never play on the host speakers; keep that
+    // guarantee across disconnect/resume, where the client's audio mode is re-read.
+    if (proc::proc.isolated_session_active()) {
+      host_audio = false;
+    }
     auto launch_session = make_launch_session(host_audio, false, args, named_cert_p);
     const bool watch_only = launch_session->watch_only;
 

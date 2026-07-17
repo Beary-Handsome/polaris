@@ -48,6 +48,7 @@ namespace virtual_display {
   namespace {
     constexpr auto backend_detection_cache_ttl = 30s;
     std::optional<backend_e> cached_backend;
+    std::string cached_backend_source;
     std::chrono::steady_clock::time_point cached_backend_time {};
     backend_detection_log_cache_t backend_detection_log_cache;
 
@@ -1065,48 +1066,56 @@ namespace virtual_display {
 
   backend_e detect_backend() {
     // Explicit user override (headless_source) takes precedence over auto-detect.
-    // Runs before the TTL cache so a config change applies immediately, and does not
-    // write the cache so switching back to "auto" is not poisoned by a forced value.
+    // The result — forced or auto — is cached under the TTL together with the source
+    // value that produced it, so probes (which spawn modprobe / shell out) run at most
+    // once per TTL, and a config change invalidates the cache immediately.
     const auto &source = config::video.linux_display.headless_source;
-    if (source == "evdi") {
-      if ((evdi::is_module_loaded() || evdi::load_module()) && evdi::load_library()) {
-        return backend_e::EVDI;
-      }
-      BOOST_LOG(warning) << "Virtual display: headless_source=evdi requested but EVDI is unavailable; falling back to auto-detect"sv;
-    } else if (source == "virtual") {
-      if (wayland_wlr::is_available()) {
-        return backend_e::WAYLAND_WLR;
-      }
-      BOOST_LOG(warning) << "Virtual display: headless_source=virtual requested but no wlroots headless output is available; falling back to auto-detect"sv;
-    } else if (source == "physical") {
-      BOOST_LOG(warning) << "Virtual display: headless_source=physical (DRM-leased dongle) is not yet implemented; falling back to auto-detect"sv;
-    }
-
     const auto now = std::chrono::steady_clock::now();
-    if (cached_backend.has_value() && (now - cached_backend_time) <= backend_detection_cache_ttl) {
+    if (cached_backend.has_value() && cached_backend_source == source &&
+        (now - cached_backend_time) <= backend_detection_cache_ttl) {
       return *cached_backend;
     }
 
     backend_e backend = backend_e::NONE;
+    bool forced = false;
 
-    // Priority 1: EVDI — creates true virtual connectors
-    if (evdi::is_module_loaded() || evdi::load_module()) {
-      if (evdi::load_library()) {
+    if (source == "evdi") {
+      if (evdi::is_available()) {
         backend = backend_e::EVDI;
+        forced = true;
+      } else {
+        BOOST_LOG(warning) << "Virtual display: headless_source=evdi requested but EVDI is unavailable; falling back to auto-detect"sv;
+      }
+    } else if (source == "virtual") {
+      if (wayland_wlr::is_available()) {
+        backend = backend_e::WAYLAND_WLR;
+        forced = true;
+      } else {
+        BOOST_LOG(warning) << "Virtual display: headless_source=virtual requested but no wlroots headless output is available; falling back to auto-detect"sv;
+      }
+    } else if (source == "physical") {
+      BOOST_LOG(warning) << "Virtual display: headless_source=physical (DRM-leased dongle) is not yet implemented; falling back to auto-detect"sv;
+    }
+
+    if (!forced) {
+      // Priority 1: EVDI — creates true virtual connectors
+      if (evdi::is_available()) {
+        backend = backend_e::EVDI;
+      }
+
+      // Priority 2: Wayland compositor headless outputs
+      if (backend == backend_e::NONE && wayland_wlr::is_available()) {
+        backend = backend_e::WAYLAND_WLR;
+      }
+
+      // Priority 3: kscreen-doctor (KDE Plasma)
+      if (backend == backend_e::NONE && kscreen::is_available()) {
+        backend = backend_e::KSCREEN_DOCTOR;
       }
     }
 
-    // Priority 2: Wayland compositor headless outputs
-    if (backend == backend_e::NONE && wayland_wlr::is_available()) {
-      backend = backend_e::WAYLAND_WLR;
-    }
-
-    // Priority 3: kscreen-doctor (KDE Plasma)
-    if (backend == backend_e::NONE && kscreen::is_available()) {
-      backend = backend_e::KSCREEN_DOCTOR;
-    }
-
     cached_backend = backend;
+    cached_backend_source = source;
     cached_backend_time = now;
     log_detected_backend(backend);
     return backend;

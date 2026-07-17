@@ -1902,24 +1902,39 @@ namespace proc {
 #ifdef __linux__
     settle_recent_browser_stream_steam_cleanup_before_launch(_app);
 
-    // Session-scoped override for per-app isolated sessions (family mode). Forcing the
+    // Session-scoped overrides for per-app isolated sessions (family mode). Forcing the
     // globals makes every downstream read — display policy, cage start, gamepad
-    // isolation, encoder-probe deferral — behave as a headless+cage session without
-    // touching those call sites. terminate() restores them (it runs on both the
-    // success path and, via the fail_guard, the failure path).
-    initial_headless_mode = config::video.linux_display.headless_mode;
-    initial_use_cage_compositor = config::video.linux_display.use_cage_compositor;
-    initial_prefer_gpu_native_capture = config::video.linux_display.prefer_gpu_native_capture;
-    initial_linux_display_saved = true;
+    // isolation, encoder-probe deferral, audio capture — behave as a headless+cage
+    // session without touching those call sites. Saved ONLY when the app opts in, so
+    // mid-session config changes made during normal sessions are never clobbered.
+    // restore_isolated_session_overrides() undoes this (called from terminate(), which
+    // runs on both the success path and, via the fail_guard, the failure path).
     if (_app.isolated_session) {
+      initial_headless_mode = config::video.linux_display.headless_mode;
+      initial_use_cage_compositor = config::video.linux_display.use_cage_compositor;
+      initial_prefer_gpu_native_capture = config::video.linux_display.prefer_gpu_native_capture;
+      initial_audio_sink = config::audio.sink;
+      initial_linux_display_saved = true;
       config::video.linux_display.headless_mode = true;
       config::video.linux_display.use_cage_compositor = true;
       // Keep the compositor truly off-screen: a GPU-native windowed fallback would make
       // the session visible on the host desktop, defeating the isolation.
       config::video.linux_display.prefer_gpu_native_capture = false;
+      // Audio isolation must hold in the CAPTURE pipeline too (rtsp copies host_audio
+      // into the session flags), so force it at the source rather than masking one call
+      // site — and clear any explicit sink so the virtual-sink env-tag routing path is
+      // taken instead of switching the desktop user's default sink.
+      launch_session->host_audio = false;
+      config::audio.sink.clear();
       BOOST_LOG(info) << "process: app ["sv << _app.name
-                      << "] opted into isolated off-screen session; forcing headless+cage for this session"sv;
+                      << "] opted into isolated off-screen session; forcing headless+cage and stream-only audio for this session"sv;
     }
+
+    // If a throw unwinds execute() before the main fail_guard below exists, this guard
+    // still restores the forced globals; it is disabled once the fail_guard takes over.
+    auto isolated_override_guard = util::fail_guard([this]() {
+      restore_isolated_session_overrides();
+    });
 
     if (config::video.linux_display.use_cage_compositor) {
       terminate_isolated_session_processes("before launching isolated cage session"sv);
@@ -2307,13 +2322,19 @@ namespace proc {
 #ifdef __linux__
       confighttp::set_session_state(confighttp::session_state_e::tearing_down);
       confighttp::emit_session_event("session_ending", "Cleaning up");
-      // Stop cage compositor (kills the game running inside it)
-      if (config::video.linux_display.use_cage_compositor) {
+      // Stop cage compositor (kills the game running inside it). Gate on the runtime
+      // too: a mid-session config change must not leave a live labwc behind.
+      if (config::video.linux_display.use_cage_compositor || cage_display_router::get_pid() > 0) {
         cage_display_router::stop();
       }
       session_manager::restore_state(session_state);
 #endif
     });
+
+#ifdef __linux__
+    // The main fail_guard (via terminate()) now owns the override restore.
+    isolated_override_guard.disable();
+#endif
 
     if (!app.gamepad.empty() && app_gamepad_override_is_supported(app.gamepad)) {
       _saved_input_config = std::make_shared<config::input_t>(config::input);
@@ -2698,11 +2719,10 @@ namespace proc {
       _audio_context = audio::get_audio_ctx_ref();
       if (_audio_context) {
         const auto session_audio_channels = normalized_audio_channel_count(channelCount);
-        // Isolated sessions never play on the host speakers, regardless of the
-        // client's localAudioPlayMode — the desktop user keeps their own audio.
-        const bool session_host_audio = launch_session->host_audio && !_app.isolated_session;
-        const auto sink = audio::select_sink_name(*_audio_context.get(), session_audio_channels, session_host_audio);
-        if (audio::should_route_session_sink_without_default(*_audio_context.get(), sink, session_host_audio)) {
+        // For isolated sessions, launch_session->host_audio was already forced false at
+        // the top of execute(), so the capture pipeline and these calls agree.
+        const auto sink = audio::select_sink_name(*_audio_context.get(), session_audio_channels, launch_session->host_audio);
+        if (audio::should_route_session_sink_without_default(*_audio_context.get(), sink, launch_session->host_audio)) {
           set_session_env_var(_env, _session_env_keys, "PULSE_SINK", sink);
           set_session_env_var(_env, _session_env_keys, "POLARIS_SESSION_AUDIO_SINK", sink);
           BOOST_LOG(info) << "Linux audio isolation: routing launched apps to virtual sink ["sv
@@ -3578,6 +3598,18 @@ namespace proc {
 #endif
   }
 
+  void proc_t::restore_isolated_session_overrides() {
+    if (!initial_linux_display_saved) {
+      return;
+    }
+    config::video.linux_display.headless_mode = initial_headless_mode;
+    config::video.linux_display.use_cage_compositor = initial_use_cage_compositor;
+    config::video.linux_display.prefer_gpu_native_capture = initial_prefer_gpu_native_capture;
+    config::audio.sink = initial_audio_sink;
+    initial_audio_sink.clear();
+    initial_linux_display_saved = false;
+  }
+
   void proc_t::terminate(bool immediate, bool needs_refresh) {
     std::error_code ec;
     placebo = false;
@@ -3610,8 +3642,9 @@ namespace proc {
 
     // Stop labwc compositor — this kills all games running inside it.
     // Without this, games launched with setsid escape the process group
-    // and keep running after the stream ends.
-    if (config::video.linux_display.use_cage_compositor) {
+    // and keep running after the stream ends. Gate on the runtime too: a
+    // mid-session config change must not leave a live labwc behind.
+    if (config::video.linux_display.use_cage_compositor || cage_display_router::get_pid() > 0) {
       cage_display_router::stop();
       terminate_isolated_session_processes("after isolated cage stop"sv);
       terminate_steam_app_processes(_app);
@@ -3745,14 +3778,9 @@ namespace proc {
       config::video.max_bitrate = initial_max_bitrate;
       config::video.adaptive_bitrate.max_bitrate_kbps = initial_adaptive_max_bitrate;
     }
-    // Restore the per-app isolated-session override. This runs after the cage stop
+    // Restore the per-app isolated-session overrides. This runs after the cage stop
     // above, which still needs to see the overridden use_cage_compositor.
-    if (initial_linux_display_saved) {
-      config::video.linux_display.headless_mode = initial_headless_mode;
-      config::video.linux_display.use_cage_compositor = initial_use_cage_compositor;
-      config::video.linux_display.prefer_gpu_native_capture = initial_prefer_gpu_native_capture;
-      initial_linux_display_saved = false;
-    }
+    restore_isolated_session_overrides();
 
     _app_id = -1;
     _app_name.clear();
