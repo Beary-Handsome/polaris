@@ -1064,6 +1064,24 @@ namespace virtual_display {
   }
 
   backend_e detect_backend() {
+    // Explicit user override (headless_source) takes precedence over auto-detect.
+    // Runs before the TTL cache so a config change applies immediately, and does not
+    // write the cache so switching back to "auto" is not poisoned by a forced value.
+    const auto &source = config::video.linux_display.headless_source;
+    if (source == "evdi") {
+      if ((evdi::is_module_loaded() || evdi::load_module()) && evdi::load_library()) {
+        return backend_e::EVDI;
+      }
+      BOOST_LOG(warning) << "Virtual display: headless_source=evdi requested but EVDI is unavailable; falling back to auto-detect"sv;
+    } else if (source == "virtual") {
+      if (wayland_wlr::is_available()) {
+        return backend_e::WAYLAND_WLR;
+      }
+      BOOST_LOG(warning) << "Virtual display: headless_source=virtual requested but no wlroots headless output is available; falling back to auto-detect"sv;
+    } else if (source == "physical") {
+      BOOST_LOG(warning) << "Virtual display: headless_source=physical (DRM-leased dongle) is not yet implemented; falling back to auto-detect"sv;
+    }
+
     const auto now = std::chrono::steady_clock::now();
     if (cached_backend.has_value() && (now - cached_backend_time) <= backend_detection_cache_ttl) {
       return *cached_backend;

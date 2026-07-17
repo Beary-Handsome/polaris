@@ -1901,6 +1901,26 @@ namespace proc {
 
 #ifdef __linux__
     settle_recent_browser_stream_steam_cleanup_before_launch(_app);
+
+    // Session-scoped override for per-app isolated sessions (family mode). Forcing the
+    // globals makes every downstream read — display policy, cage start, gamepad
+    // isolation, encoder-probe deferral — behave as a headless+cage session without
+    // touching those call sites. terminate() restores them (it runs on both the
+    // success path and, via the fail_guard, the failure path).
+    initial_headless_mode = config::video.linux_display.headless_mode;
+    initial_use_cage_compositor = config::video.linux_display.use_cage_compositor;
+    initial_prefer_gpu_native_capture = config::video.linux_display.prefer_gpu_native_capture;
+    initial_linux_display_saved = true;
+    if (_app.isolated_session) {
+      config::video.linux_display.headless_mode = true;
+      config::video.linux_display.use_cage_compositor = true;
+      // Keep the compositor truly off-screen: a GPU-native windowed fallback would make
+      // the session visible on the host desktop, defeating the isolation.
+      config::video.linux_display.prefer_gpu_native_capture = false;
+      BOOST_LOG(info) << "process: app ["sv << _app.name
+                      << "] opted into isolated off-screen session; forcing headless+cage for this session"sv;
+    }
+
     if (config::video.linux_display.use_cage_compositor) {
       terminate_isolated_session_processes("before launching isolated cage session"sv);
     }
@@ -2678,8 +2698,11 @@ namespace proc {
       _audio_context = audio::get_audio_ctx_ref();
       if (_audio_context) {
         const auto session_audio_channels = normalized_audio_channel_count(channelCount);
-        const auto sink = audio::select_sink_name(*_audio_context.get(), session_audio_channels, launch_session->host_audio);
-        if (audio::should_route_session_sink_without_default(*_audio_context.get(), sink, launch_session->host_audio)) {
+        // Isolated sessions never play on the host speakers, regardless of the
+        // client's localAudioPlayMode — the desktop user keeps their own audio.
+        const bool session_host_audio = launch_session->host_audio && !_app.isolated_session;
+        const auto sink = audio::select_sink_name(*_audio_context.get(), session_audio_channels, session_host_audio);
+        if (audio::should_route_session_sink_without_default(*_audio_context.get(), sink, session_host_audio)) {
           set_session_env_var(_env, _session_env_keys, "PULSE_SINK", sink);
           set_session_env_var(_env, _session_env_keys, "POLARIS_SESSION_AUDIO_SINK", sink);
           BOOST_LOG(info) << "Linux audio isolation: routing launched apps to virtual sink ["sv
@@ -3722,6 +3745,14 @@ namespace proc {
       config::video.max_bitrate = initial_max_bitrate;
       config::video.adaptive_bitrate.max_bitrate_kbps = initial_adaptive_max_bitrate;
     }
+    // Restore the per-app isolated-session override. This runs after the cage stop
+    // above, which still needs to see the overridden use_cage_compositor.
+    if (initial_linux_display_saved) {
+      config::video.linux_display.headless_mode = initial_headless_mode;
+      config::video.linux_display.use_cage_compositor = initial_use_cage_compositor;
+      config::video.linux_display.prefer_gpu_native_capture = initial_prefer_gpu_native_capture;
+      initial_linux_display_saved = false;
+    }
 
     _app_id = -1;
     _app_name.clear();
@@ -4559,6 +4590,7 @@ namespace proc {
           ctx.wait_all = app_node.value("wait-all", true);
           ctx.exit_timeout = std::chrono::seconds { app_node.value("exit-timeout", 5) };
           ctx.virtual_display = app_node.value("virtual-display", false);
+          ctx.isolated_session = app_node.value("isolated-session", false);
           ctx.scale_factor = app_node.value("scale-factor", 100);
           ctx.use_app_identity = app_node.value("use-app-identity", false);
           ctx.per_client_app_identity = app_node.value("per-client-app-identity", false);

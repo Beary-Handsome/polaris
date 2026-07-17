@@ -120,6 +120,7 @@ namespace proc {
     bool auto_detach;
     bool wait_all;
     bool virtual_display;
+    bool isolated_session;  // family mode: force headless+cage for THIS app only
     bool virtual_display_primary;
     bool use_app_identity;
     bool per_client_app_identity;
@@ -144,6 +145,11 @@ namespace proc {
     int initial_max_bitrate = 0;
     int initial_adaptive_max_bitrate = 0;
     bool initial_video_config_saved = false;
+    // Saved linux_display flags for the per-app isolated-session override (family mode).
+    bool initial_headless_mode = false;
+    bool initial_use_cage_compositor = false;
+    bool initial_prefer_gpu_native_capture = false;
+    bool initial_linux_display_saved = false;
 
     proc_t(
       boost::process::v1::environment &&env,
