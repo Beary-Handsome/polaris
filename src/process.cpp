@@ -2470,10 +2470,17 @@ namespace proc {
     const bool using_headless_cage =
       display_policy.requested_headless &&
       display_policy.use_cage_runtime;
+    // headless_source=physical: the stream captures a real connector (HDMI
+    // dongle) that the desktop compositor already drives — no virtual display
+    // is created. Capture targets it deterministically by kernel connector
+    // name via config::video.output_name (see kmsgrab named targeting).
+    const bool physical_headless_source =
+      config::video.linux_display.headless_source == "physical";
     const bool should_use_linux_virtual_display =
-      display_policy.use_host_virtual_display ||
-      launch_session->virtual_display ||
-      (!launch_session->user_locked_virtual_display && _app.virtual_display);
+      !physical_headless_source && (
+        display_policy.use_host_virtual_display ||
+        launch_session->virtual_display ||
+        (!launch_session->user_locked_virtual_display && _app.virtual_display));
 
     if (
       !display_policy.use_cage_runtime &&
@@ -2516,6 +2523,16 @@ namespace proc {
       } else {
         BOOST_LOG(warning) << "Virtual display requested but no backend available on Linux"sv;
         launch_session->virtual_display = false;
+      }
+    } else if (physical_headless_source && !display_policy.use_cage_runtime) {
+      if (!config::video.output_name.empty()) {
+        BOOST_LOG(info) << "Physical headless source: capturing connector ["sv
+                        << config::video.output_name
+                        << "] driven by the desktop compositor; no virtual display created"sv;
+      } else {
+        BOOST_LOG(warning) << "headless_source=physical but no Output Name is configured; "sv
+                           << "set Output Name to the dongle's connector name (e.g. DP-3 or HDMI-A-2, "sv
+                           << "see /sys/class/drm) so capture targets it deterministically"sv;
       }
     } else if (using_headless_cage) {
       BOOST_LOG(info) << "Linux virtual display: skipped because "sv

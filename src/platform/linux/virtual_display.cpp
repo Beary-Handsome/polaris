@@ -1094,7 +1094,12 @@ namespace virtual_display {
         BOOST_LOG(warning) << "Virtual display: headless_source=virtual requested but no wlroots headless output is available; falling back to auto-detect"sv;
       }
     } else if (source == "physical") {
-      BOOST_LOG(warning) << "Virtual display: headless_source=physical (DRM-leased dongle) is not yet implemented; falling back to auto-detect"sv;
+      // Physical source means "capture a real connector the desktop compositor
+      // already drives" — the launch path skips virtual-display creation
+      // entirely (see process.cpp), so no backend is needed here. This branch
+      // is only reached if something still asks for a virtual display; honor
+      // that request via auto-detect rather than failing it.
+      BOOST_LOG(debug) << "Virtual display: headless_source=physical targets an existing connector; using auto-detect for this virtual-display request"sv;
     }
 
     if (!forced) {
