@@ -4675,6 +4675,31 @@ namespace proc {
           ctx.steam_appid = app_node.value("steam-appid", "");
           ctx.steam_launch_mode = proc::normalize_steam_launch_mode(app_node.value("steam-launch-mode", "direct"));
           ctx.output_name = app_node.value("output-name", "");
+
+          // Display Source — the canonical per-app selector for where this
+          // app's pixels come from: "" / "default" (primary display),
+          // "isolated" (hidden compositor), "virtual" (created virtual
+          // screen), "output" (a specific connector via output-name).
+          // Legacy flags migrate silently; an explicit display-source wins
+          // over legacy flags and normalizes them so every downstream read
+          // (isolated_session / virtual_display / output_name) stays valid.
+          ctx.display_source = app_node.value("display-source", "");
+          if (ctx.display_source.empty()) {
+            if (ctx.isolated_session) {
+              ctx.display_source = "isolated";
+            } else if (ctx.virtual_display) {
+              ctx.display_source = "virtual";
+            } else if (!ctx.output_name.empty()) {
+              ctx.display_source = "output";
+            } else {
+              ctx.display_source = "default";
+            }
+          }
+          ctx.isolated_session = (ctx.display_source == "isolated");
+          ctx.virtual_display = (ctx.display_source == "virtual");
+          if (ctx.display_source != "output") {
+            ctx.output_name.clear();
+          }
           ctx.game_category = app_node.value("game-category", "");
           ctx.source = app_node.value("source", ctx.steam_appid.empty() ? "manual" : "steam");
           ctx.last_launched = app_node.value("last-launched", (int64_t)0);

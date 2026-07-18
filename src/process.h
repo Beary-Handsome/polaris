@@ -114,6 +114,10 @@ namespace proc {
     // Pin capture to a specific output (kernel connector name, e.g. HDMI-A-1)
     // for this app only; empty = use the global/default output (primary).
     std::string output_name;
+    // Canonical display-source selector: "default" | "isolated" | "virtual" |
+    // "output". Parsed/migrated in parse(); the legacy bools above are
+    // normalized from it, so downstream code may read either.
+    std::string display_source;
     std::string game_category;  // "fast_action", "cinematic", "desktop", "vr", or ""
     std::string source;         // "steam", "lutris", "heroic", or "manual"
     std::vector<std::string> genres;

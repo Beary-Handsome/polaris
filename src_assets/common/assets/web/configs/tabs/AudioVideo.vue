@@ -290,11 +290,12 @@ const validateFallbackMode = (event) => {
 
           <div class="settings-subtle-surface flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div class="text-sm font-semibold text-silver">Family Mode — play while I keep using my PC</div>
+              <div class="text-sm font-semibold text-silver">Headless Stream (whole host)</div>
               <div class="mt-1 text-sm leading-relaxed text-storm">
-                Stream a game to another device while the desktop stays visible and usable on this PC.
-                Uses the hidden headless compositor for the whole host; to isolate just one app instead,
-                enable “Isolated session” on that app in the Applications view.
+                Forces EVERY app — including Desktop — into the hidden headless compositor.
+                Most setups don't want this: for Family Mode, set an app's Display Source to
+                “Isolated session” in the Applications view instead, so Desktop keeps
+                streaming your real screen.
               </div>
             </div>
             <button
@@ -302,7 +303,7 @@ const validateFallbackMode = (event) => {
               class="focus-ring shrink-0 rounded-lg border border-ice/40 bg-ice/10 px-4 py-2 text-sm font-semibold text-ice transition hover:bg-ice/20"
               @click="setStreamDisplayMode('headless_stream')"
             >
-              Enable Family Mode
+              Enable for whole host
             </button>
           </div>
 
@@ -452,7 +453,6 @@ const validateFallbackMode = (event) => {
                   <option value="auto">{{ $t('config.headless_source_auto') }}</option>
                   <option value="virtual">{{ $t('config.headless_source_virtual') }}</option>
                   <option value="evdi">{{ $t('config.headless_source_evdi') }}</option>
-                  <option value="physical">{{ $t('config.headless_source_physical') }}</option>
                 </select>
               </div>
             </div>

@@ -370,6 +370,7 @@ namespace confighttp::validation {
 
     constexpr std::array string_keys {
       "cmd"sv,
+      "display-source"sv,
       "gamepad"sv,
       "id"sv,
       "image-path"sv,
