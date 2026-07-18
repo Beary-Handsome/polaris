@@ -117,6 +117,8 @@
     "terminate_on_pause_desc": "Terminate the app when all clients are disconnected.",
     "isolated_session": "Isolated session (Family Mode)",
     "isolated_session_desc": "Run this app inside Polaris's hidden headless compositor so it streams alongside your live desktop. The streamed player controls only the game; your physical keyboard and mouse keep controlling the desktop, and game audio goes to a separate sink so it will not play on the host speakers.",
+    "output_name": "Capture Output (Linux)",
+    "output_name_desc": "Pin this app's capture to a specific display by kernel connector name (e.g. HDMI-A-1 for a dummy plug, or an EVDI virtual screen). Leave empty to capture the default/primary display. With display auto-management enabled, the pinned output is switched on at stream start and off when the stream ends.",
     "use_app_identity": "Use App Identity",
     "use_app_identity_desc": "Use the app's own identity while creating virtual displays instead of client's. This is useful when you want display configuration for each APP separately.",
     "virtual_display": "Always create Virtual Display",

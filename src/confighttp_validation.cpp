@@ -375,6 +375,7 @@ namespace confighttp::validation {
       "image-path"sv,
       "name"sv,
       "output"sv,
+      "output-name"sv,
       "steam-appid"sv,
       "working-dir"sv,
     };

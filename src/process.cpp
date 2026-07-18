@@ -2000,11 +2000,33 @@ namespace proc {
                       << *launch_session->paired_target_bitrate_kbps << " kbps";
     }
 
+    // Per-app output targeting: an app may pin capture to a specific output
+    // (a dummy-plug connector or EVDI screen, by kernel connector name). Wins
+    // over client-profile output preferences. config::video.output_name is
+    // already saved to initial_display above and restored on teardown, so no
+    // extra restore plumbing is needed for the capture target itself.
+    const bool app_output_override = !_app.output_name.empty();
+    if (app_output_override) {
+      BOOST_LOG(info) << "process: app ["sv << _app.name
+                      << "] pins capture output to ["sv << _app.output_name << ']';
+      config::video.output_name = _app.output_name;
+#ifdef __linux__
+      // Let auto-managed display power follow the session's target: the pinned
+      // output is enabled at session start and disabled at teardown. No-op
+      // unless linux_auto_manage_displays is on. Never auto-manage the primary.
+      if (_app.output_name != config::video.linux_display.primary_output) {
+        initial_streaming_output = config::video.linux_display.streaming_output;
+        initial_streaming_output_saved = true;
+        config::video.linux_display.streaming_output = _app.output_name;
+      }
+#endif
+    }
+
     auto client_profile = client_profiles::get_client_profile(launch_session->device_name);
     if (client_profile) {
       BOOST_LOG(info) << "Applying client profile for \""sv << launch_session->device_name << '"';
 
-      if (!client_profile->output_name.empty()) {
+      if (!client_profile->output_name.empty() && !app_output_override) {
         BOOST_LOG(info) << "Client profile: overriding output_name to \""sv << client_profile->output_name << '"';
         config::video.output_name = client_profile->output_name;
       }
@@ -3616,6 +3638,14 @@ namespace proc {
   }
 
   void proc_t::restore_isolated_session_overrides() {
+    // Per-app output pin: restore the auto-managed streaming output. Kept
+    // independent of the isolated-session flags — an app can pin an output
+    // without opting into an isolated session.
+    if (initial_streaming_output_saved) {
+      config::video.linux_display.streaming_output = initial_streaming_output;
+      initial_streaming_output.clear();
+      initial_streaming_output_saved = false;
+    }
     if (!initial_linux_display_saved) {
       return;
     }
@@ -4644,6 +4674,7 @@ namespace proc {
           ctx.gamepad = app_node.value("gamepad", "");
           ctx.steam_appid = app_node.value("steam-appid", "");
           ctx.steam_launch_mode = proc::normalize_steam_launch_mode(app_node.value("steam-launch-mode", "direct"));
+          ctx.output_name = app_node.value("output-name", "");
           ctx.game_category = app_node.value("game-category", "");
           ctx.source = app_node.value("source", ctx.steam_appid.empty() ? "manual" : "steam");
           ctx.last_launched = app_node.value("last-launched", (int64_t)0);

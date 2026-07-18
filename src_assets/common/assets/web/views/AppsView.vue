@@ -982,6 +982,13 @@
               <Checkbox class="app-editor-toggle-card" id="isolatedSession" label="apps.isolated_session" desc="apps.isolated_session_desc" desc-as-hint v-model="editForm['isolated-session']" default="false"></Checkbox>
               <Checkbox class="app-editor-toggle-card" id="useAppIdentity" label="apps.use_app_identity" desc="apps.use_app_identity_desc" desc-as-hint v-model="editForm['use-app-identity']" default="false"></Checkbox>
               <Checkbox class="app-editor-toggle-card" v-if="editForm['use-app-identity']" id="perClientAppIdentity" label="apps.per_client_app_identity" desc="apps.per_client_app_identity_desc" desc-as-hint v-model="editForm['per-client-app-identity']" default="false"></Checkbox>
+              <div v-if="platform === 'linux'" class="app-editor-field">
+                <div class="settings-field-head">
+                  <label for="outputName" class="settings-field-label">{{ $t('apps.output_name') }}</label>
+                  <InfoHint size="sm" :label="$t('apps.output_name')">{{ $t('apps.output_name_desc') }}</InfoHint>
+                </div>
+                <input type="text" class="app-editor-input app-editor-input-mono" id="outputName" v-model="editForm['output-name']" placeholder="HDMI-A-1" />
+              </div>
               <div class="app-editor-field">
                 <div class="settings-field-head">
                   <label for="exitTimeout" class="settings-field-label">{{ $t('apps.exit_timeout') }}</label>
@@ -1161,7 +1168,8 @@ const newAppTemplate = {
   "isolated-session": false,
   "terminate-on-pause": false,
   "gamepad": "",
-  "game-category": ""
+  "game-category": "",
+  "output-name": ""
 }
 
 // Template ref

@@ -111,6 +111,9 @@ namespace proc {
     std::string gamepad;
     std::string steam_appid;
     std::string steam_launch_mode = std::string {STEAM_LAUNCH_MODE_DIRECT};
+    // Pin capture to a specific output (kernel connector name, e.g. HDMI-A-1)
+    // for this app only; empty = use the global/default output (primary).
+    std::string output_name;
     std::string game_category;  // "fast_action", "cinematic", "desktop", "vr", or ""
     std::string source;         // "steam", "lutris", "heroic", or "manual"
     std::vector<std::string> genres;
@@ -152,6 +155,10 @@ namespace proc {
     bool initial_prefer_gpu_native_capture = false;
     std::string initial_audio_sink;
     bool initial_linux_display_saved = false;
+    // Saved when a per-app output pin redirects the auto-managed streaming
+    // display for the session (restored independently of the isolated flags).
+    std::string initial_streaming_output;
+    bool initial_streaming_output_saved = false;
 
     /**
      * @brief Whether the currently running app opted into an isolated session.
