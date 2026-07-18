@@ -339,10 +339,25 @@ namespace platf {
                                                const std::string &source_name) {
     auto mic = std::make_unique<pw_mic_attr_t>();
 
-    // Initialize ring buffer: hold at least 4 frames worth of data
+    // Initialize the ring buffer. PipeWire hands us one graph-quantum of samples
+    // per process callback, and the graph driver here is the virtual sink, whose
+    // quantum can be MUCH larger than a single Opus frame — up to the sink's
+    // clock.quantum-limit (8192 frames) and it grows under CPU load. Sizing the
+    // ring to only a few Opus frames (the old frame_size*channels*4 ≈ 20ms) means
+    // every callback delivers more samples than the ring can hold, so the overflow
+    // path below drops large spans of every delivery — producing the heavy
+    // static/jitter heard in the stream. Size the ring to comfortably exceed the
+    // largest possible single delivery so the 5ms-Opus consumer always drains
+    // without the producer ever overrunning it (the extra capacity is only
+    // headroom; steady-state fill stays around one quantum, so latency is
+    // unchanged in normal operation).
     mic->capture_data.channels = channels;
     mic->capture_data.sample_rate = sample_rate;
-    mic->capture_data.buffer_capacity = frame_size * channels * 4;
+    constexpr std::uint32_t pipewire_quantum_limit = 8192;  // frames; matches sink clock.quantum-limit
+    const std::uint32_t base_frames = frame_size * 4u;
+    const std::uint32_t min_frames = pipewire_quantum_limit * 2u;
+    const std::uint32_t ring_frames = base_frames > min_frames ? base_frames : min_frames;
+    mic->capture_data.buffer_capacity = static_cast<std::size_t>(ring_frames) * static_cast<std::size_t>(channels);
     mic->capture_data.buffer.resize(mic->capture_data.buffer_capacity, 0.0f);
 
     BOOST_LOG(info) << "PipeWire: creating capture stream for source: "sv << source_name

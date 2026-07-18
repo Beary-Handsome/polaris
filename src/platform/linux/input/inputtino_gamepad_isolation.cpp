@@ -490,7 +490,14 @@ std::string command_with_headless_gamepad_isolation(const std::string &command, 
     wrapped += path;
   }
 
-  static constexpr std::array<std::string_view, 12> runtime_device_roots {
+  // NOTE: do NOT add /dev/fd (or /dev/stdin|stdout|stderr) here. They are
+  // symlinks that `--dev /dev` already recreates inside the sandbox (pointing at
+  // /proc/self/fd). Bind-mounting over the symlink makes bwrap abort with
+  // "Can't bind mount .../fd on /newroot/dev/fd: No such file or directory" —
+  // even with --dev-bind-try, because the failure is resolving the destination
+  // symlink, not a missing source. That abort kills the whole sandbox, so Steam
+  // and the game never launch (the isolated session then renders a black frame).
+  static constexpr std::array<std::string_view, 11> runtime_device_roots {
     "/dev/dri",
     "/dev/snd",
     "/dev/kfd",
@@ -501,7 +508,6 @@ std::string command_with_headless_gamepad_isolation(const std::string &command, 
     "/dev/nvidia-modeset",
     "/dev/nvidia-caps",
     "/dev/shm",
-    "/dev/fd",
     "/dev/pts",
   };
 

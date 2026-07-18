@@ -288,6 +288,25 @@ const validateFallbackMode = (event) => {
             </button>
           </div>
 
+          <div class="settings-subtle-surface flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div class="text-sm font-semibold text-silver">Headless Stream (whole host)</div>
+              <div class="mt-1 text-sm leading-relaxed text-storm">
+                Forces EVERY app — including Desktop — into the hidden headless compositor.
+                Most setups don't want this: for Family Mode, set an app's Display Source to
+                “Isolated session” in the Applications view instead, so Desktop keeps
+                streaming your real screen.
+              </div>
+            </div>
+            <button
+              type="button"
+              class="focus-ring shrink-0 rounded-lg border border-ice/40 bg-ice/10 px-4 py-2 text-sm font-semibold text-ice transition hover:bg-ice/20"
+              @click="setStreamDisplayMode('headless_stream')"
+            >
+              Enable for whole host
+            </button>
+          </div>
+
           <div class="settings-warning-surface">
             {{ selectedStreamDisplayMode.restartCopy }}
           </div>
@@ -420,6 +439,21 @@ const validateFallbackMode = (event) => {
                   >
                   <div class="relative h-5 w-9 rounded-full bg-storm/40 transition-colors peer-checked:bg-accent after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full"></div>
                 </label>
+              </div>
+
+              <div class="surface-muted p-4">
+                <div class="text-sm font-medium text-silver">{{ $t('config.headless_source') }}</div>
+                <div class="mt-1 text-sm text-storm">{{ $t('config.headless_source_desc') }}</div>
+                <div class="mt-3 rounded bg-deep/60 px-2 py-1 font-mono text-xs text-storm">headless_source</div>
+                <select
+                  id="headless_source"
+                  v-model="config.headless_source"
+                  class="focus-ring mt-4 w-full rounded-lg border border-storm/40 bg-deep px-3 py-2 text-sm text-silver"
+                >
+                  <option value="auto">{{ $t('config.headless_source_auto') }}</option>
+                  <option value="virtual">{{ $t('config.headless_source_virtual') }}</option>
+                  <option value="evdi">{{ $t('config.headless_source_evdi') }}</option>
+                </select>
               </div>
             </div>
           </details>

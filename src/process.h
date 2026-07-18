@@ -111,6 +111,13 @@ namespace proc {
     std::string gamepad;
     std::string steam_appid;
     std::string steam_launch_mode = std::string {STEAM_LAUNCH_MODE_DIRECT};
+    // Pin capture to a specific output (kernel connector name, e.g. HDMI-A-1)
+    // for this app only; empty = use the global/default output (primary).
+    std::string output_name;
+    // Canonical display-source selector: "default" | "isolated" | "virtual" |
+    // "output". Parsed/migrated in parse(); the legacy bools above are
+    // normalized from it, so downstream code may read either.
+    std::string display_source;
     std::string game_category;  // "fast_action", "cinematic", "desktop", "vr", or ""
     std::string source;         // "steam", "lutris", "heroic", or "manual"
     std::vector<std::string> genres;
@@ -120,6 +127,7 @@ namespace proc {
     bool auto_detach;
     bool wait_all;
     bool virtual_display;
+    bool isolated_session;  // family mode: force headless+cage for THIS app only
     bool virtual_display_primary;
     bool use_app_identity;
     bool per_client_app_identity;
@@ -144,6 +152,31 @@ namespace proc {
     int initial_max_bitrate = 0;
     int initial_adaptive_max_bitrate = 0;
     bool initial_video_config_saved = false;
+    // Saved config for the per-app isolated-session override (family mode); populated
+    // only when the launched app opted in (initial_linux_display_saved is the guard).
+    bool initial_headless_mode = false;
+    bool initial_use_cage_compositor = false;
+    bool initial_prefer_gpu_native_capture = false;
+    std::string initial_audio_sink;
+    bool initial_linux_display_saved = false;
+    // Saved when a per-app output pin redirects the auto-managed streaming
+    // display for the session (restored independently of the isolated flags).
+    std::string initial_streaming_output;
+    bool initial_streaming_output_saved = false;
+
+    /**
+     * @brief Whether the currently running app opted into an isolated session.
+     * Used by the resume path to keep audio isolation across reconnects.
+     */
+    bool isolated_session_active() const {
+      return _app_id != -1 && _app.isolated_session;
+    }
+
+    /**
+     * @brief Restore the config globals forced by the isolated-session override.
+     * Idempotent; a no-op unless the override is active.
+     */
+    void restore_isolated_session_overrides();
 
     proc_t(
       boost::process::v1::environment &&env,

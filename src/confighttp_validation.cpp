@@ -136,6 +136,7 @@ namespace confighttp::validation {
       "global_state_cmd"sv,
       "hdr_mode"sv,
       "headless_mode"sv,
+      "headless_source"sv,
       "hevc_mode"sv,
       "hide_tray_controls"sv,
       "high_resolution_scrolling"sv,
@@ -369,11 +370,13 @@ namespace confighttp::validation {
 
     constexpr std::array string_keys {
       "cmd"sv,
+      "display-source"sv,
       "gamepad"sv,
       "id"sv,
       "image-path"sv,
       "name"sv,
       "output"sv,
+      "output-name"sv,
       "steam-appid"sv,
       "working-dir"sv,
     };
@@ -383,6 +386,7 @@ namespace confighttp::validation {
       "elevated"sv,
       "exclude-global-prep-cmd"sv,
       "exclude-global-state-cmd"sv,
+      "isolated-session"sv,
       "launching"sv,
       "per-client-app-identity"sv,
       "terminate-on-pause"sv,

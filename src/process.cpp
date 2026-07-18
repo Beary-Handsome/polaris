@@ -1703,19 +1703,19 @@ namespace proc {
 #ifdef __linux__
   // Linux virtual display state — holds the active virtual display instance, if any
   static std::optional<virtual_display::vdisplay_t> linux_vdisplay;
-  static bool linux_vdisplay_available_checked = false;
-  static bool linux_vdisplay_available = false;
 
   /**
-   * @brief Check and cache whether Linux virtual display support is available.
+   * @brief Check whether Linux virtual display support is available.
+   *
+   * Deliberately NOT latched per-process: availability changes at runtime
+   * (evdi module loaded/unloaded, libevdi installed, compositor restarted).
+   * A once-only latch here meant a Polaris started before the prerequisites
+   * were in place would report "no backend available" forever, even after
+   * detect_backend() itself succeeded. detect_backend() already maintains a
+   * short TTL cache, so calling it directly stays cheap.
    */
   bool isLinuxVDisplayAvailable() {
-    if (!linux_vdisplay_available_checked) {
-      const auto backend = virtual_display::detect_backend();
-      linux_vdisplay_available = (backend != virtual_display::backend_e::NONE);
-      linux_vdisplay_available_checked = true;
-    }
-    return linux_vdisplay_available;
+    return virtual_display::detect_backend() != virtual_display::backend_e::NONE;
   }
 
   namespace linux_display {
@@ -1901,6 +1901,41 @@ namespace proc {
 
 #ifdef __linux__
     settle_recent_browser_stream_steam_cleanup_before_launch(_app);
+
+    // Session-scoped overrides for per-app isolated sessions (family mode). Forcing the
+    // globals makes every downstream read — display policy, cage start, gamepad
+    // isolation, encoder-probe deferral, audio capture — behave as a headless+cage
+    // session without touching those call sites. Saved ONLY when the app opts in, so
+    // mid-session config changes made during normal sessions are never clobbered.
+    // restore_isolated_session_overrides() undoes this (called from terminate(), which
+    // runs on both the success path and, via the fail_guard, the failure path).
+    if (_app.isolated_session) {
+      initial_headless_mode = config::video.linux_display.headless_mode;
+      initial_use_cage_compositor = config::video.linux_display.use_cage_compositor;
+      initial_prefer_gpu_native_capture = config::video.linux_display.prefer_gpu_native_capture;
+      initial_audio_sink = config::audio.sink;
+      initial_linux_display_saved = true;
+      config::video.linux_display.headless_mode = true;
+      config::video.linux_display.use_cage_compositor = true;
+      // Keep the compositor truly off-screen: a GPU-native windowed fallback would make
+      // the session visible on the host desktop, defeating the isolation.
+      config::video.linux_display.prefer_gpu_native_capture = false;
+      // Audio isolation must hold in the CAPTURE pipeline too (rtsp copies host_audio
+      // into the session flags), so force it at the source rather than masking one call
+      // site — and clear any explicit sink so the virtual-sink env-tag routing path is
+      // taken instead of switching the desktop user's default sink.
+      launch_session->host_audio = false;
+      config::audio.sink.clear();
+      BOOST_LOG(info) << "process: app ["sv << _app.name
+                      << "] opted into isolated off-screen session; forcing headless+cage and stream-only audio for this session"sv;
+    }
+
+    // If a throw unwinds execute() before the main fail_guard below exists, this guard
+    // still restores the forced globals; it is disabled once the fail_guard takes over.
+    auto isolated_override_guard = util::fail_guard([this]() {
+      restore_isolated_session_overrides();
+    });
+
     if (config::video.linux_display.use_cage_compositor) {
       terminate_isolated_session_processes("before launching isolated cage session"sv);
     }
@@ -1965,11 +2000,33 @@ namespace proc {
                       << *launch_session->paired_target_bitrate_kbps << " kbps";
     }
 
+    // Per-app output targeting: an app may pin capture to a specific output
+    // (a dummy-plug connector or EVDI screen, by kernel connector name). Wins
+    // over client-profile output preferences. config::video.output_name is
+    // already saved to initial_display above and restored on teardown, so no
+    // extra restore plumbing is needed for the capture target itself.
+    const bool app_output_override = !_app.output_name.empty();
+    if (app_output_override) {
+      BOOST_LOG(info) << "process: app ["sv << _app.name
+                      << "] pins capture output to ["sv << _app.output_name << ']';
+      config::video.output_name = _app.output_name;
+#ifdef __linux__
+      // Let auto-managed display power follow the session's target: the pinned
+      // output is enabled at session start and disabled at teardown. No-op
+      // unless linux_auto_manage_displays is on. Never auto-manage the primary.
+      if (_app.output_name != config::video.linux_display.primary_output) {
+        initial_streaming_output = config::video.linux_display.streaming_output;
+        initial_streaming_output_saved = true;
+        config::video.linux_display.streaming_output = _app.output_name;
+      }
+#endif
+    }
+
     auto client_profile = client_profiles::get_client_profile(launch_session->device_name);
     if (client_profile) {
       BOOST_LOG(info) << "Applying client profile for \""sv << launch_session->device_name << '"';
 
-      if (!client_profile->output_name.empty()) {
+      if (!client_profile->output_name.empty() && !app_output_override) {
         BOOST_LOG(info) << "Client profile: overriding output_name to \""sv << client_profile->output_name << '"';
         config::video.output_name = client_profile->output_name;
       }
@@ -2287,13 +2344,19 @@ namespace proc {
 #ifdef __linux__
       confighttp::set_session_state(confighttp::session_state_e::tearing_down);
       confighttp::emit_session_event("session_ending", "Cleaning up");
-      // Stop cage compositor (kills the game running inside it)
-      if (config::video.linux_display.use_cage_compositor) {
+      // Stop cage compositor (kills the game running inside it). Gate on the runtime
+      // too: a mid-session config change must not leave a live labwc behind.
+      if (config::video.linux_display.use_cage_compositor || cage_display_router::get_pid() > 0) {
         cage_display_router::stop();
       }
       session_manager::restore_state(session_state);
 #endif
     });
+
+#ifdef __linux__
+    // The main fail_guard (via terminate()) now owns the override restore.
+    isolated_override_guard.disable();
+#endif
 
     if (!app.gamepad.empty() && app_gamepad_override_is_supported(app.gamepad)) {
       _saved_input_config = std::make_shared<config::input_t>(config::input);
@@ -2429,10 +2492,17 @@ namespace proc {
     const bool using_headless_cage =
       display_policy.requested_headless &&
       display_policy.use_cage_runtime;
+    // headless_source=physical: the stream captures a real connector (HDMI
+    // dongle) that the desktop compositor already drives — no virtual display
+    // is created. Capture targets it deterministically by kernel connector
+    // name via config::video.output_name (see kmsgrab named targeting).
+    const bool physical_headless_source =
+      config::video.linux_display.headless_source == "physical";
     const bool should_use_linux_virtual_display =
-      display_policy.use_host_virtual_display ||
-      launch_session->virtual_display ||
-      (!launch_session->user_locked_virtual_display && _app.virtual_display);
+      !physical_headless_source && (
+        display_policy.use_host_virtual_display ||
+        launch_session->virtual_display ||
+        (!launch_session->user_locked_virtual_display && _app.virtual_display));
 
     if (
       !display_policy.use_cage_runtime &&
@@ -2475,6 +2545,16 @@ namespace proc {
       } else {
         BOOST_LOG(warning) << "Virtual display requested but no backend available on Linux"sv;
         launch_session->virtual_display = false;
+      }
+    } else if (physical_headless_source && !display_policy.use_cage_runtime) {
+      if (!config::video.output_name.empty()) {
+        BOOST_LOG(info) << "Physical headless source: capturing connector ["sv
+                        << config::video.output_name
+                        << "] driven by the desktop compositor; no virtual display created"sv;
+      } else {
+        BOOST_LOG(warning) << "headless_source=physical but no Output Name is configured; "sv
+                           << "set Output Name to the dongle's connector name (e.g. DP-3 or HDMI-A-2, "sv
+                           << "see /sys/class/drm) so capture targets it deterministically"sv;
       }
     } else if (using_headless_cage) {
       BOOST_LOG(info) << "Linux virtual display: skipped because "sv
@@ -2678,6 +2758,8 @@ namespace proc {
       _audio_context = audio::get_audio_ctx_ref();
       if (_audio_context) {
         const auto session_audio_channels = normalized_audio_channel_count(channelCount);
+        // For isolated sessions, launch_session->host_audio was already forced false at
+        // the top of execute(), so the capture pipeline and these calls agree.
         const auto sink = audio::select_sink_name(*_audio_context.get(), session_audio_channels, launch_session->host_audio);
         if (audio::should_route_session_sink_without_default(*_audio_context.get(), sink, launch_session->host_audio)) {
           set_session_env_var(_env, _session_env_keys, "PULSE_SINK", sink);
@@ -3555,6 +3637,26 @@ namespace proc {
 #endif
   }
 
+  void proc_t::restore_isolated_session_overrides() {
+    // Per-app output pin: restore the auto-managed streaming output. Kept
+    // independent of the isolated-session flags — an app can pin an output
+    // without opting into an isolated session.
+    if (initial_streaming_output_saved) {
+      config::video.linux_display.streaming_output = initial_streaming_output;
+      initial_streaming_output.clear();
+      initial_streaming_output_saved = false;
+    }
+    if (!initial_linux_display_saved) {
+      return;
+    }
+    config::video.linux_display.headless_mode = initial_headless_mode;
+    config::video.linux_display.use_cage_compositor = initial_use_cage_compositor;
+    config::video.linux_display.prefer_gpu_native_capture = initial_prefer_gpu_native_capture;
+    config::audio.sink = initial_audio_sink;
+    initial_audio_sink.clear();
+    initial_linux_display_saved = false;
+  }
+
   void proc_t::terminate(bool immediate, bool needs_refresh) {
     std::error_code ec;
     placebo = false;
@@ -3587,8 +3689,9 @@ namespace proc {
 
     // Stop labwc compositor — this kills all games running inside it.
     // Without this, games launched with setsid escape the process group
-    // and keep running after the stream ends.
-    if (config::video.linux_display.use_cage_compositor) {
+    // and keep running after the stream ends. Gate on the runtime too: a
+    // mid-session config change must not leave a live labwc behind.
+    if (config::video.linux_display.use_cage_compositor || cage_display_router::get_pid() > 0) {
       cage_display_router::stop();
       terminate_isolated_session_processes("after isolated cage stop"sv);
       terminate_steam_app_processes(_app);
@@ -3722,6 +3825,9 @@ namespace proc {
       config::video.max_bitrate = initial_max_bitrate;
       config::video.adaptive_bitrate.max_bitrate_kbps = initial_adaptive_max_bitrate;
     }
+    // Restore the per-app isolated-session overrides. This runs after the cage stop
+    // above, which still needs to see the overridden use_cage_compositor.
+    restore_isolated_session_overrides();
 
     _app_id = -1;
     _app_name.clear();
@@ -4559,6 +4665,7 @@ namespace proc {
           ctx.wait_all = app_node.value("wait-all", true);
           ctx.exit_timeout = std::chrono::seconds { app_node.value("exit-timeout", 5) };
           ctx.virtual_display = app_node.value("virtual-display", false);
+          ctx.isolated_session = app_node.value("isolated-session", false);
           ctx.scale_factor = app_node.value("scale-factor", 100);
           ctx.use_app_identity = app_node.value("use-app-identity", false);
           ctx.per_client_app_identity = app_node.value("per-client-app-identity", false);
@@ -4567,6 +4674,32 @@ namespace proc {
           ctx.gamepad = app_node.value("gamepad", "");
           ctx.steam_appid = app_node.value("steam-appid", "");
           ctx.steam_launch_mode = proc::normalize_steam_launch_mode(app_node.value("steam-launch-mode", "direct"));
+          ctx.output_name = app_node.value("output-name", "");
+
+          // Display Source — the canonical per-app selector for where this
+          // app's pixels come from: "" / "default" (primary display),
+          // "isolated" (hidden compositor), "virtual" (created virtual
+          // screen), "output" (a specific connector via output-name).
+          // Legacy flags migrate silently; an explicit display-source wins
+          // over legacy flags and normalizes them so every downstream read
+          // (isolated_session / virtual_display / output_name) stays valid.
+          ctx.display_source = app_node.value("display-source", "");
+          if (ctx.display_source.empty()) {
+            if (ctx.isolated_session) {
+              ctx.display_source = "isolated";
+            } else if (ctx.virtual_display) {
+              ctx.display_source = "virtual";
+            } else if (!ctx.output_name.empty()) {
+              ctx.display_source = "output";
+            } else {
+              ctx.display_source = "default";
+            }
+          }
+          ctx.isolated_session = (ctx.display_source == "isolated");
+          ctx.virtual_display = (ctx.display_source == "virtual");
+          if (ctx.display_source != "output") {
+            ctx.output_name.clear();
+          }
           ctx.game_category = app_node.value("game-category", "");
           ctx.source = app_node.value("source", ctx.steam_appid.empty() ? "manual" : "steam");
           ctx.last_launched = app_node.value("last-launched", (int64_t)0);
