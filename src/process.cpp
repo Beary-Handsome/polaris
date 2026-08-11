@@ -1969,12 +1969,31 @@ namespace proc {
                         << " non-session Steam client process(es) running"sv;
       }
 
-      BOOST_LOG(info) << "process: terminating the session-owned Steam client root through pidfd before "sv
-                      << ownership.helpers.size() << " helper process(es)"sv;
-      if (!terminate_pidfds(ownership.roots, 5s, 1s, "private Steam client root"sv)) {
-        BOOST_LOG(warning) << "process: session-owned Steam client root remained after bounded pidfd termination; "sv
-                           << "continuing with isolated cage fallback cleanup"sv;
-        return false;
+      // Ask Steam to shut down GRACEFULLY first. `steam -shutdown` goes through Steam's own
+      // IPC: it closes the running game, flushes Steam Cloud, then exits cleanly. A raw
+      // SIGTERM/SIGKILL of the client root (the pidfd path below) does NOT do that — Steam
+      // is killed mid-game and reports "has encountered a fatal error" on the next launch.
+      // Skip the wait during daemon shutdown (a ~10s abort watchdog would truncate it).
+      bool steam_root_exited_gracefully = false;
+      if (!daemon_shutdown_requested()) {
+        const auto shutdown_cmd = canonical_steam_shutdown_command(steam_launch_reference_command(app));
+        BOOST_LOG(info) << "process: requesting graceful Steam shutdown ["sv << shutdown_cmd
+                        << "] before pidfd termination"sv;
+        (void) std::system((shutdown_cmd + " >/dev/null 2>&1 &").c_str());
+        steam_root_exited_gracefully = wait_for_pidfds_exit(ownership.roots, 20s);
+        BOOST_LOG(info) << (steam_root_exited_gracefully
+                              ? "process: session-owned Steam exited gracefully before pidfd termination"sv
+                              : "process: Steam did not exit within the graceful-shutdown window; falling back to pidfd termination"sv);
+      }
+
+      if (!steam_root_exited_gracefully) {
+        BOOST_LOG(info) << "process: terminating the session-owned Steam client root through pidfd before "sv
+                        << ownership.helpers.size() << " helper process(es)"sv;
+        if (!terminate_pidfds(ownership.roots, 5s, 1s, "private Steam client root"sv)) {
+          BOOST_LOG(warning) << "process: session-owned Steam client root remained after bounded pidfd termination; "sv
+                             << "continuing with isolated cage fallback cleanup"sv;
+          return false;
+        }
       }
 
       if (!ownership.helpers.empty()) {
