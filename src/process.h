@@ -390,6 +390,7 @@ namespace proc {
     bool wait_all;
     bool virtual_display;
     bool virtual_display_primary;
+    bool isolated_session = false;  // #224 Family Mode: launch this app into the private labwc cage (headless + cage), per-app rather than host-wide
     bool use_app_identity;
     bool per_client_app_identity;
     bool allow_client_commands;

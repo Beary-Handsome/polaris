@@ -5074,7 +5074,18 @@ namespace proc {
       this->initial_use_cage_compositor = linux_display.use_cage_compositor;
       this->initial_prefer_gpu_native_capture = linux_display.prefer_gpu_native_capture;
       this->initial_auto_manage_displays = linux_display.auto_manage_displays;
-      const std::string session_mode = launch_session ? launch_session->stream_mode : std::string {};
+      std::string session_mode = launch_session ? launch_session->stream_mode : std::string {};
+      // Per-app Family Mode (#224): an app flagged "isolated-session" launches into the private
+      // labwc cage (headless + cage) even when the Moonlight client didn't request a streamMode,
+      // making isolation a per-app property instead of a host-wide default. This reuses the exact
+      // session-scoped override path below (applied in-memory, restored at teardown). An explicit
+      // client streamMode or a mirrorDesktop launch still wins — both are already handled here.
+      if (session_mode.empty() && _app.isolated_session &&
+          !(launch_session && launch_session->mirror_desktop)) {
+        session_mode = std::string {stream_display_policy::k_headless_stream};
+        BOOST_LOG(info) << "process: app is flagged isolated-session; selecting private stream mode ["sv
+                        << session_mode << "] for this launch"sv;
+      }
       if (!session_mode.empty() &&
           !(launch_session && launch_session->mirror_desktop) &&
           session_mode != linux_display.stream_mode) {
@@ -8133,6 +8144,7 @@ namespace proc {
         {"per-client-app-identity", false},
         {"virtual-display", false},
         {"virtual-display-primary", false},
+        {"isolated-session", false},
         {"terminate-on-pause", false}
       };
 
@@ -8642,6 +8654,7 @@ namespace proc {
           ctx.wait_all = app_node.value("wait-all", true);
           ctx.exit_timeout = std::chrono::seconds { app_node.value("exit-timeout", 5) };
           ctx.virtual_display = app_node.value("virtual-display", false);
+          ctx.isolated_session = app_node.value("isolated-session", false);
           ctx.scale_factor = app_node.value("scale-factor", 100);
           ctx.use_app_identity = app_node.value("use-app-identity", false);
           ctx.per_client_app_identity = app_node.value("per-client-app-identity", false);
