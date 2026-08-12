@@ -751,8 +751,16 @@ namespace portal {
 #ifdef POLARIS_BUILD_WAYLAND
         cage_configured = config::video.linux_display.use_cage_compositor;
 #endif
+        // gamescope sessions capture gamescope's own PipeWire Video/Source directly via
+        // ensure_global_capture()'s gamescopegrab path; the xdg-desktop-portal ScreenCast
+        // session is neither needed nor available on non-SteamOS hosts. Creating it eagerly
+        // fails (no xdg-desktop-portal-gamescope backend) and aborts init before the direct
+        // grab ever runs — so skip the eager portal session for gamescope, like cage/labwc does.
+        const bool gamescope_configured =
+          config::video.linux_display.private_runtime == "gamescope" ||
+          config::video.linux_display.stream_mode == "gamescope_stream";
         if (!cage_configured) {
-          if (!ensure_global_session()) {
+          if (!gamescope_configured && !ensure_global_session()) {
             return -1;
           }
 
@@ -876,8 +884,12 @@ namespace portal {
       }
 #endif
 
-      // Fallback: portal D-Bus capture (only when cage is NOT configured)
-      if (!ensure_global_session()) {
+      // Fallback: portal D-Bus capture (only when cage is NOT configured). gamescope skips the
+      // eager portal session and captures its own PipeWire node in ensure_global_capture instead.
+      const bool gamescope_configured =
+        config::video.linux_display.private_runtime == "gamescope" ||
+        config::video.linux_display.stream_mode == "gamescope_stream";
+      if (!gamescope_configured && !ensure_global_session()) {
         BOOST_LOG(warning) << "portal: No capture session available"sv;
         return platf::capture_e::reinit;
       }
