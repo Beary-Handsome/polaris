@@ -1334,7 +1334,15 @@ namespace pipewire_capture {
     pw_registry_add_listener(registry, &registry_listener, &registry_events, &ctx);
 
     auto *loop = pw_main_loop_get_loop(ctx.loop);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    // gamescope publishes its "gamescope" Video/Source PipeWire node a couple seconds
+    // AFTER the compositor socket comes up (its internal PipeWire has to connect first).
+    // A 400ms window loses that race, returns nullopt, and the caller falls through to the
+    // xdg-desktop-portal ScreenCast path — which on non-SteamOS hosts (no
+    // xdg-desktop-portal-gamescope backend, e.g. openSUSE/KDE) can't capture gamescope-0,
+    // yielding a black stream. The registry listener fires (and quits the loop) the instant
+    // the node appears, so widening the window only costs wall-time when the node never
+    // shows; on the happy path it returns as soon as gamescope exports the node.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
     while (!ctx.found && std::chrono::steady_clock::now() < deadline) {
       pw_loop_iterate(loop, 50);
     }
