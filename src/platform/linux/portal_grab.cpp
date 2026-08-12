@@ -467,6 +467,10 @@ namespace portal {
       // without private portal ScreenCast when linux_stream_mode=gamescope_stream.
       // Falls through to portal if the node is missing (idle unit not exporting yet).
       const auto &stream_mode = config::video.linux_display.stream_mode;
+      BOOST_LOG(info) << "portal: gamescopegrab gate — capture_running="sv
+                      << (g_media.capture && g_media.capture->running())
+                      << " stream_mode=["sv << stream_mode << "] private_runtime=["sv
+                      << config::video.linux_display.private_runtime << "]"sv;
       if ((!g_media.capture || !g_media.capture->running()) &&
           (stream_mode == "gamescope_stream" || stream_mode.empty()) &&
           config::video.linux_display.private_runtime == "gamescope") {

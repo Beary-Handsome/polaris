@@ -1259,6 +1259,8 @@ namespace pipewire_capture {
     struct gamescope_find_t {
       pw_main_loop *loop = nullptr;
       std::optional<video_source_t> found;
+      int nodes_seen = 0;
+      int video_sources_seen = 0;
     };
 
     void on_registry_global(void *data, uint32_t id, uint32_t /*permissions*/, const char *type, uint32_t /*version*/, const struct spa_dict *props) {
@@ -1269,11 +1271,19 @@ namespace pipewire_capture {
       if (ctx->found) {
         return;
       }
+      ctx->nodes_seen++;
       const char *media_class = spa_dict_lookup(props, "media.class");
       const char *media_name = spa_dict_lookup(props, "media.name");
       const char *node_name = spa_dict_lookup(props, "node.name");
       const char *app_name = spa_dict_lookup(props, "application.name");
       const bool is_video_source = media_class && std::strcmp(media_class, "Video/Source") == 0;
+      if (is_video_source) {
+        ctx->video_sources_seen++;
+        BOOST_LOG(info) << "pipewire: registry Video/Source id="sv << id
+                        << " media.name=["sv << (media_name ? media_name : "")
+                        << "] node.name=["sv << (node_name ? node_name : "")
+                        << "] application.name=["sv << (app_name ? app_name : "") << "]"sv;
+      }
       auto has_gamescope = [](const char *s) {
         return s && std::strstr(s, "gamescope") != nullptr;
       };
@@ -1313,6 +1323,7 @@ namespace pipewire_capture {
     }
 
     init_pipewire_once();
+    BOOST_LOG(info) << "pipewire: find_gamescope_video_source: scanning session graph for a gamescope Video/Source (window 5s)"sv;
     gamescope_find_t ctx;
     ctx.loop = pw_main_loop_new(nullptr);
     if (!ctx.loop) {
@@ -1325,6 +1336,7 @@ namespace pipewire_capture {
     }
     auto *core = pw_context_connect(context, nullptr, 0);
     if (!core) {
+      BOOST_LOG(warning) << "pipewire: find_gamescope_video_source: pw_context_connect FAILED — cannot reach session PipeWire from this context"sv;
       pw_context_destroy(context);
       pw_main_loop_destroy(ctx.loop);
       return std::nullopt;
@@ -1357,6 +1369,10 @@ namespace pipewire_capture {
       BOOST_LOG(info) << "pipewire: found gamescope Video/Source node="sv << ctx.found->node_id
                       << " serial="sv << ctx.found->object_serial
                       << " name="sv << ctx.found->node_name;
+    }
+    else {
+      BOOST_LOG(warning) << "pipewire: find_gamescope_video_source: NO gamescope node within 5s (nodes_seen="sv
+                         << ctx.nodes_seen << " video_sources_seen="sv << ctx.video_sources_seen << ")"sv;
     }
     return ctx.found;
   }
