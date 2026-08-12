@@ -5075,14 +5075,22 @@ namespace proc {
       this->initial_prefer_gpu_native_capture = linux_display.prefer_gpu_native_capture;
       this->initial_auto_manage_displays = linux_display.auto_manage_displays;
       std::string session_mode = launch_session ? launch_session->stream_mode : std::string {};
-      // Per-app Family Mode (#224): an app flagged "isolated-session" launches into the private
-      // labwc cage (headless + cage) even when the Moonlight client didn't request a streamMode,
-      // making isolation a per-app property instead of a host-wide default. This reuses the exact
-      // session-scoped override path below (applied in-memory, restored at teardown). An explicit
-      // client streamMode or a mirrorDesktop launch still wins — both are already handled here.
+      // Per-app Family Mode (#224): an app flagged "isolated-session" launches into a private,
+      // headless session even when the Moonlight client didn't request a streamMode, making
+      // isolation a per-app property instead of a host-wide default. Runtime by app type:
+      //   - Steam Big Picture -> gamescope (SteamOS-style: games launch nested inside Big Picture
+      //     instead of dropping Steam to its desktop client), when the gamescope binary is present.
+      //   - everything else, and the fallback when gamescope is missing -> the labwc cage.
+      // Both are headless, so the host desktop stays private and a work user is undisturbed either
+      // way. This reuses the exact session-scoped override path below (applied in-memory, restored
+      // at teardown). An explicit client streamMode or a mirrorDesktop launch still wins.
       if (session_mode.empty() && _app.isolated_session &&
           !(launch_session && launch_session->mirror_desktop)) {
-        session_mode = std::string {stream_display_policy::k_headless_stream};
+        const bool prefer_gamescope =
+          is_steam_big_picture_app(_app) &&
+          stream_display_policy::selection_available(stream_display_policy::k_gamescope_stream);
+        session_mode = std::string {prefer_gamescope ? stream_display_policy::k_gamescope_stream
+                                                      : stream_display_policy::k_headless_stream};
         BOOST_LOG(info) << "process: app is flagged isolated-session; selecting private stream mode ["sv
                         << session_mode << "] for this launch"sv;
       }
