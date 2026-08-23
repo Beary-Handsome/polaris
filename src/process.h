@@ -537,6 +537,7 @@ namespace proc {
     bool wait_all;
     bool virtual_display;
     bool virtual_display_primary;
+    bool isolated_session = false;  // PR #226 Family Mode: launch this app into the per-app family_isolated labwc path (not host-wide)
     bool use_app_identity;
     bool per_client_app_identity;
     bool allow_client_commands;
