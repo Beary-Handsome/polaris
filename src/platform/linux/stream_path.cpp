@@ -138,6 +138,24 @@ namespace stream_path {
         {},
         "host",
       },
+      {
+        // Community Family Mode (PR #226): a per-app isolated labwc session. Behaves like
+        // headless_stream (private labwc + wlroots, host desktop left alone) but is selected
+        // per-app via the isolated-session app flag, so a single app streams isolated while the
+        // rest of the host is untouched. Soft-gated on labwc like the other LABWC paths.
+        k_family_isolated,
+        "Family Mode (isolated)",
+        "Per-app",
+        "Per-app isolated labwc session: an app flagged isolated-session runs in its own private compositor while the host desktop stays usable. Community Family Mode (PR #226).",
+        runtime_kind_e::LABWC,
+        capture_kind_e::WLROOTS,
+        topology_kind_e::LEAVE_ALONE,
+        false,
+        true,
+        true,
+        {},
+        "private",
+      },
     };
   }
 

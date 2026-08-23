@@ -109,7 +109,10 @@ namespace stream_display_policy {
   legacy_booleans_t legacy_booleans_for_selection(std::string_view selection) {
     legacy_booleans_t booleans;
     const auto key = to_lower_copy(selection);
-    if (key == k_headless_stream) {
+    if (key == k_headless_stream || key == stream_path::k_family_isolated) {
+      // family_isolated is the per-app Family Mode variant of headless_stream: the same private
+      // labwc cage (headless + cage), selected per-app via the isolated-session flag rather than
+      // host-wide, so one app streams isolated while the rest of the host is untouched (PR #226).
       booleans.headless_mode = true;
       booleans.use_cage_compositor = true;
       booleans.prefer_gpu_native_capture = false;

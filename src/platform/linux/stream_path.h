@@ -107,6 +107,7 @@ namespace stream_path {
   constexpr std::string_view k_desktop_display = "desktop_display";
   constexpr std::string_view k_gamescope_stream = "gamescope_stream";
   constexpr std::string_view k_headless_dongle = "headless_dongle";
+  constexpr std::string_view k_family_isolated = "family_isolated";
 
   constexpr std::string_view k_runtime_labwc = "labwc";
   constexpr std::string_view k_runtime_gamescope = "gamescope";
